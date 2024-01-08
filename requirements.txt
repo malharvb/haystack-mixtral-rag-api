@@ -1,0 +1,10 @@
+farm-haystack
+farm-haystack[pinecone]
+fastapi
+uvicorn
+nltk
+python-multipart
+jinja2
+python-dotenv
+torch
+sentence_transformers
