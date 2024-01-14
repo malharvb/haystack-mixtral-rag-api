@@ -1,5 +1,6 @@
 farm-haystack
 farm-haystack[pinecone]
+farm-haystack[file-conversion]
 fastapi
 uvicorn
 nltk
