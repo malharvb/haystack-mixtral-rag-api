@@ -43,13 +43,17 @@
       <h2>Legal clauses present in the uploaded document</h2>
       <div id="box2">Initial</div>
 
+      <h2> What type of clauses do you want to add to the document?</h2>
+      <div class="box3">Initial</div>
+
       <h2>What clauses can be added to the legal document</h2>
-      <div id="box3">Initial</div>
+      <div id="box4">Initial</div>
 
       <script>
         const box1 = document.getElementById("box1");
         const box2 = document.getElementById("box2");
         const box3 = document.getElementById("box3");
+        const box4 = document.getElementById("box4");
 
     
         uploadform.onsubmit = async (e) => {
@@ -66,9 +70,10 @@
             box2.innerText = legalClauses;
 
             let formData = new FormData()
-            formData.append('documentType', documentType)
-            formData.append('legalClauses', legalClauses)
-            let res2 = await fetch("/rag", {
+            formData.append('document_type', documentType)
+            formData.append('legal_clauses', legalClauses)
+            // formData.append('clause_type', '')
+            let res2 = await fetch("/legal-clause-gen", {
                 method: "POST",
                 body: formData,
             });

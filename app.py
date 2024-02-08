@@ -100,8 +100,8 @@ prompt_node_chat = PromptNode(
     api_key=HF_TOKEN,
     default_prompt_template=prompt_template_chat,
     max_length=1000,
-    timeout= 300,
-    model_kwargs={"model_max_length": 8000}
+    timeout= 700,
+    model_kwargs={"model_max_length": 10000}
 )
 
 chat_pipeline = Pipeline()
@@ -109,9 +109,9 @@ chat_pipeline.add_node(component=retriever, name="Retriever", inputs=["Query"])
 chat_pipeline.add_node(component=prompt_node_chat, name="PromptNode", inputs=["Retriever"])
 
 
-def get_additional_legal_clauses(documentType, legalClauses):
+def get_additional_legal_clauses(documentType, legalClauses, clauseType):
 
-    query = f"Given a {documentType} which has the following clauses {legalClauses}. Return additional clauses that can be added to the legal agreement."
+    query = f"Given a {documentType} which has the following clauses {legalClauses}. Add a clause of type {clauseType} to the document. The length of the clause should be less than 100 words."
 
     json_response = query_pipeline.run(query=query, params={"Retriever" : {"top_k": 5}, "debug": True})
 
@@ -259,9 +259,9 @@ async def index(relevant_documents: str = Form(...)):
 
 
 @app.post("/legal-clause-gen")
-async def get_clauses(document_type: Annotated[str, Form()], legal_clauses: Annotated[str, Form()]):
+async def get_clauses(document_type: Annotated[str, Form()], legal_clauses: Annotated[str, Form()], clause_type: Annotated[str, Form()]):
     start_time = time.time()
-    answer, relevant_documents = get_additional_legal_clauses(document_type, legal_clauses)
+    answer, relevant_documents = get_additional_legal_clauses(document_type, legal_clauses, clause_type)
     response_data = jsonable_encoder(json.dumps({"answer": answer, "relevant_documents": relevant_documents}))
     print("Time took to process the request and return response is {} sec".format(time.time() - start_time))
     res = Response(response_data)
@@ -320,14 +320,14 @@ async def analyze_doc(file: UploadFile = File(...)):
         default_prompt_template=prompt_template,
         max_length=1000,
         timeout= 300,
-        model_kwargs={"model_max_length": 5000}
+        model_kwargs={"model_max_length": 10000}
     )
 
     pipe = Pipeline()
     pipe.add_node(component=retriever, name="retriever", inputs=["Query"])
     pipe.add_node(component=prompt_node, name="prompt_node", inputs=["retriever"])
 
-    documentType = pipe.run(query="Identify the type of legal contract in the given context. Answer only the type of legal contract and enclose it in curly braces. Add no other extra words to the answer.")
+    documentType = pipe.run(query="Identify the type of legal contract in the given summary context being provided to you. Answer only the type of legal contract and enclose it in curly braces. question-answer type or any other response is not acceptable. Strictly add no other extra words to the answer.")
 
     # print(documentType["answers"][0].answer)
 
