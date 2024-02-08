@@ -17,7 +17,7 @@ from haystack.agents import AgentStep, Agent, Tool
 from haystack.agents.base import Agent, ToolsManager
 
 
-from docx import Document
+from docx import Document as DC
 from io import BytesIO
 import uvicorn
 import json
@@ -220,6 +220,18 @@ def replace_dots_with_mask(input_string):
     result_string += input_string[start:]
 
     return result_string.strip()
+
+def clean_json_string(input_string):
+    # Filter out invalid characters
+    valid_chars = [char for char in input_string if char.isprintable() and ord(char) < 128]
+
+    # Reconstruct the cleaned string
+    cleaned_string = ''.join(valid_chars)
+
+    cleaned_string = re.sub(r'[^\x20-\x7E]', '', cleaned_string)
+
+    return cleaned_string
+
 ########################################################################################################################
 ## Route definitions of the API
 
@@ -227,9 +239,24 @@ def replace_dots_with_mask(input_string):
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-# @app.get("/doc-content")
-# async def index(request: Request):
-#     document_store.get_documents_by_id(ids=['49091c797d2236e73fab510b1e9c7f6b'], return_embedding=True)
+@app.post("/relevant-documents")
+async def index(relevant_documents: str = Form(...)):
+
+    relevant_documents_ids = json.loads(relevant_documents)
+    relevant_documents = document_store_for_template.get_documents_by_id(ids=relevant_documents_ids)
+
+    content = []
+
+    for relevant_doc in relevant_documents:
+        content.append(relevant_doc.content)
+
+    response_data = jsonable_encoder(json.dumps({"relevant_documents_content": content}))
+
+    res = Response(response_data)
+    return res
+
+
+
 
 @app.post("/legal-clause-gen")
 async def get_clauses(document_type: Annotated[str, Form()], legal_clauses: Annotated[str, Form()]):
@@ -272,6 +299,10 @@ async def chat_doc(summary: Annotated[str, Form()], query: Annotated[str, Form()
 async def analyze_doc(file: UploadFile = File(...)):
     start_time = time.time()
     
+    global document_store_for_template
+
+    document_store_for_template = None
+
     document_store = await get_document_store(file)
 
     retriever = BM25Retriever(document_store=document_store, top_k=10)
@@ -391,6 +422,8 @@ async def question_gen(file: UploadFile = File(...)):
 
             print('{"questions": ' + str(json.dumps(answerJson)) + ',"document": "' + document + '"}')
 
+            document = clean_json_string(document)
+
             yield '{"questions": ' + str(json.dumps(answerJson)) + ',"document": "' + str(document.replace('\n', '\\n')) + '","docIndex":'+ str(idx) +',"totalDocs": ' + str(totalDocs) + '}'
 
 
@@ -411,7 +444,7 @@ async def download_docx(substitution_strings: str = Form(...), file: UploadFile 
 
     try:
         # Create a docx document from the content
-        doc = Document(BytesIO(content))
+        doc = DC(BytesIO(content))
     except Exception as e:
         return {"error": f"Error decoding docx file: {str(e)}"}
     
