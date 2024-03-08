@@ -10,3 +10,4 @@ python-dotenv
 torch
 sentence_transformers
 python-docx
+farm-haystack[ocr]

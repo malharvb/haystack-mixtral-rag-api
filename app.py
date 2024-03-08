@@ -1,4 +1,4 @@
-from haystack.nodes import EmbeddingRetriever, BM25Retriever, PreProcessor, AnswerParser, TransformersSummarizer, PromptNode, PromptTemplate
+from haystack.nodes import EmbeddingRetriever, BM25Retriever, PreProcessor, AnswerParser, TransformersSummarizer, PromptNode, PromptTemplate, ImageToTextConverter
 from haystack.document_stores import PineconeDocumentStore, InMemoryDocumentStore
 from haystack.utils import convert_files_to_docs, print_questions
 from haystack import Pipeline
@@ -16,6 +16,10 @@ from haystack.agents.memory import ConversationSummaryMemory
 from haystack.agents import AgentStep, Agent, Tool
 from haystack.agents.base import Agent, ToolsManager
 
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+import pytesseract
 
 from docx import Document as DC
 from io import BytesIO
@@ -51,7 +55,7 @@ app.add_middleware(
 templates = Jinja2Templates(directory="templates")
 
 HF_TOKEN = os.getenv('HF_TOKEN')
-OPEN_AI_KEY = os.getenv('OPENAI_API_KEY')
+OPEN_AI_KEY = os.getenv('OPENAI_API_KEY2')
 
 
 document_store = PineconeDocumentStore(api_key=os.getenv('PINECONE_API_KEY'), environment="gcp-starter",
@@ -70,12 +74,13 @@ prompt_template = PromptTemplate(prompt = """Answer the asked query based on onl
                                 )
 
 prompt_node = PromptNode(
-    model_name_or_path="mistralai/Mixtral-8x7B-Instruct-v0.1",
-    api_key=HF_TOKEN,
+    model_name_or_path="gpt-3.5-turbo",
+    api_key=OPEN_AI_KEY,
+    # model_name_or_path="mistralai/Mixtral-8x7B-Instruct-v0.1",
+    # api_key=HF_TOKEN,
     default_prompt_template=prompt_template,
-    max_length=1000,
-    timeout= 300,
-    model_kwargs={"model_max_length": 8000}
+    # model_kwargs={"model_max_length": 8000}
+    model_kwargs={"temperature": 0.2, "top_p": 0.1, "max_tokens": 2000}
 )
 
 query_pipeline = Pipeline()
@@ -85,7 +90,7 @@ query_pipeline.add_node(component=prompt_node, name="PromptNode", inputs=["Retri
 
 
 
-prompt_template_chat = PromptTemplate(prompt = """Look at the summary to get information about what has happened previously in the chat. Answer the asked query based on only the given documents and summary. Answer in less than 150 words. Your answer should only contain common spoken english words and nothing more complex than high school level english.
+prompt_template_chat = PromptTemplate(prompt = """Understand the summary given below to get information about what has happened previously in the chat. Answer the asked query based on only the given documents and summary. Answer in less than 150 words. Your answer should only contain common spoken english words and nothing more complex than high school level english.
                                             Summary: {meta['summary']}
                                             Documents: {join(documents)}
                                             Query: {query}
@@ -96,18 +101,36 @@ prompt_template_chat = PromptTemplate(prompt = """Look at the summary to get inf
 
 
 prompt_node_chat = PromptNode(
-    model_name_or_path="mistralai/Mixtral-8x7B-Instruct-v0.1",
-    api_key=HF_TOKEN,
+    model_name_or_path="gpt-3.5-turbo",
+    api_key=OPEN_AI_KEY,
+    # model_name_or_path="mistralai/Mixtral-8x7B-Instruct-v0.1",
+    # api_key=HF_TOKEN,
     default_prompt_template=prompt_template_chat,
-    max_length=1000,
-    timeout= 300,
-    model_kwargs={"model_max_length": 8000}
+    # model_kwargs={"model_max_length": 8000}
+    model_kwargs={"temperature": 0.2, "top_p": 0.1, "max_tokens": 2000}
 )
 
 chat_pipeline = Pipeline()
 chat_pipeline.add_node(component=retriever, name="Retriever", inputs=["Query"])
 chat_pipeline.add_node(component=prompt_node_chat, name="PromptNode", inputs=["Retriever"])
 
+
+def compute_sim(reference_texts, generated_response):
+    reference_text = ' '.join(reference_texts)
+
+    docs=[reference_text, generated_response]
+
+    # Create TFidfVectorizer 
+    tfidf= TfidfVectorizer()
+
+    # Fit and transform the documents 
+    tfidf_vector = tfidf.fit_transform(docs)
+
+    # Compute cosine similarity
+    cosine_sim=cosine_similarity(tfidf_vector, tfidf_vector)
+
+    # Print the cosine similarity
+    return cosine_sim[0][1]
 
 def get_additional_legal_clauses(documentType, legalClauses):
 
@@ -147,9 +170,14 @@ def chat_with_rag_pipeline(query, chat_pipeline, summary="", legal_clauses=""):
         break
 
     document_names = []
+    document_content = []
 
     for document in documents:
         document_names.append(document.id)
+        document_content.append(document.content)
+
+    document_content.append(summary)
+    # print(documents)
 
     docs = [Document(f"{summary}"), Document(f"{answer}")]
 
@@ -160,9 +188,14 @@ def chat_with_rag_pipeline(query, chat_pipeline, summary="", legal_clauses=""):
                                 output_parser=AnswerParser()
                                 )
 
+    reference_texts = document_content
+    generated_response = answer
+
+    similarity = compute_sim(reference_texts, generated_response)
+
     new_summary = prompt_node.prompt(prompt_template=prompt_template_summary, documents=docs)[0].answer
 
-    return answer, document_names, new_summary
+    return answer, document_names, new_summary, similarity
 
 ########################################################################################################################
 ## Creating a common document store for contract templates uploaded at initial load
@@ -181,7 +214,13 @@ async def get_document_store(file=None):
             content = await file.read()
             f.write(content)
 
-        docs = convert_files_to_docs(dir_path=filedir)
+        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+        
+        if file.filename.split('.')[1] == 'png' or file.filename.split('.')[1] == 'jpg':
+            node = ImageToTextConverter()
+            docs = node.convert(f"{filedir}/{file.filename}")
+        else: 
+            docs = convert_files_to_docs(dir_path=filedir)
 
         document_store_for_template = InMemoryDocumentStore(use_bm25=True)
 
@@ -270,8 +309,8 @@ async def get_clauses(document_type: Annotated[str, Form()], legal_clauses: Anno
 @app.post("/legal-clause-chat")
 async def chat_clauses(summary: Annotated[str, Form()], query: Annotated[str, Form()], legal_clauses: Annotated[str, Form()]):
     start_time = time.time()
-    answer, relevant_documents, updated_summary = chat_with_rag_pipeline(query, chat_pipeline, summary, legal_clauses)
-    response_data = jsonable_encoder(json.dumps({"answer": answer, "relevant_documents": relevant_documents, "summary": updated_summary}))
+    answer, relevant_documents, updated_summary, similarity = chat_with_rag_pipeline(query, chat_pipeline, summary, legal_clauses)
+    response_data = jsonable_encoder(json.dumps({"answer": answer, "relevant_documents": relevant_documents, "summary": updated_summary, "similarity": similarity}))
     print("Time took to process the request and return response is {} sec".format(time.time() - start_time))
     res = Response(response_data)
     return res
@@ -288,8 +327,8 @@ async def chat_doc(summary: Annotated[str, Form()], query: Annotated[str, Form()
     chat_pipeline_solo.add_node(component=retriever, name="Retriever", inputs=["Query"])
     chat_pipeline_solo.add_node(component=prompt_node_chat, name="PromptNode", inputs=["Retriever"])
 
-    answer, relevant_documents, updated_summary = chat_with_rag_pipeline(query, chat_pipeline_solo, summary)
-    response_data = jsonable_encoder(json.dumps({"answer": answer, "relevant_documents": relevant_documents, "summary": updated_summary}))
+    answer, relevant_documents, updated_summary, similarity = chat_with_rag_pipeline(query, chat_pipeline_solo, summary)
+    response_data = jsonable_encoder(json.dumps({"answer": answer, "relevant_documents": relevant_documents, "summary": updated_summary, "similarity": similarity}))
     print("Time took to process the request and return response is {} sec".format(time.time() - start_time))
     res = Response(response_data)
     return res
@@ -411,6 +450,7 @@ async def question_gen(file: UploadFile = File(...)):
             result = prompt_node.prompt(prompt_template=prompt_template, document=document)
 
             result[0].answer = re.sub(r',(\s*})', r'\1', result[0].answer)
+            print(result[0].answer)
             answerJson = json.loads(str(result[0].answer))
             removeItems = []
             for key, value in answerJson.items():
